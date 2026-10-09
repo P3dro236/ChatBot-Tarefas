@@ -1,5 +1,5 @@
 import { ai } from '../Integrations/gemini/client.js'
-import { atividade_schema } from '../Repository/Repository.js'
+import { atividade_schema } from '../Repository/Task_Repository.js'
 const date = new Date
 
 
@@ -19,6 +19,7 @@ export async function text_to_json(input){
         2. Não invente informações. Se um dado não estiver explícito ou implícito na mensagem, retorne null.
         3. Datas relativas: Converta termos como "amanhã", "depois de amanhã" ou "quinta que vem" para datas exatas no formato YYYY-MM-DD, usando a data atual como base.
         4. Título conciso: Crie um "titulo" claro e direto baseado na ação solicitada.
+        5. Caso a mensagem não faça sentido a sua função, deve retornar todas 
 
         Mensagem:
         ${input}`,

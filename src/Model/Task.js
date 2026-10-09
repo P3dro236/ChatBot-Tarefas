@@ -1,5 +1,6 @@
 export class Task{
     constructor(titulo, materia, tipo, data_entrega, observacoes, nota){
+        // this.user = user
         this.titulo = titulo
         this.materia = materia
         this.tipo = tipo

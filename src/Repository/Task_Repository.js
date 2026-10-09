@@ -25,6 +25,14 @@ export const atividade_schema = {
         nota:{
             type: ["number", "null"],
             description: "A nota declarada pelo usuário para o valor da atividade, o valor numerico deve obrigatoriamente estar descrito aqui, e nao em outros lugares como observacoes, podendo ser tanto inteira tanto conter valores com virgula (ex: 3.5, 12, 15). Null se não houver."
+        },
+        sucesso:{
+            type: "boolean",
+            descruption: "Caso a mensagem não faça sentido com a proposta de sua função, ou caso, deve retornar como false, em caso de compreensão da mensagem e correta tradução para json o valor deve ser true."
+        },
+        retorno:{
+            type: ["string","null"],
+            description: "Caso o sucesso seja falso, deve deixar uma mensagem de porque o erro aconteceu, caso o sucesso seja true então o valor deve ser null EX(Não consegui entender, repita por favor.)"
         }
     },
     required: [
