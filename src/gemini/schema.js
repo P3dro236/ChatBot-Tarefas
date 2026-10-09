@@ -1,0 +1,36 @@
+export const atividade_schema = {
+    type: "object",
+    properties: {
+        titulo: {
+            type: "string",
+            description: "Título conciso ou nome da atividade (ex: 'Prova de Cálculo', 'Resumo do Capítulo 3')."
+        },
+        materia: {
+            type: ["string", "null"],
+            description: "Nome da disciplina ou matéria relacionada. Null se não puder ser inferido."
+        },
+        tipo: {
+            type: "string",
+            enum: ["trabalho", "prova", "apresentacao", "leitura", "exercicio", "outro"],
+            description: "Categoria principal da atividade."
+        },
+        data_entrega: {
+            type: ["string", "null"],
+            description: "Data de entrega ou de realização no formato YYYY-MM-DD. Calcular datas relativas com base na data atual. Null se não informado."
+        },
+        observacoes: {
+            type: ["string", "null"],
+            description: "Qualquer detalhe extra e relevante da mensagem (ex: 'em grupo de 4 pessoas', 'páginas 10 a 50', 'peso 2 na média'). Null se não houver."
+        },
+        nora:{
+            type: ["boolean", "null"],
+            description: "A nota declarada pelo usuário, podendo ser tanto inteira tanto conter valores com virgula (ex: 3.5, 12, 15). Null se não houver."
+        }
+    },
+    required: [
+        "titulo",
+        "materia",
+        "tipo",
+        "data_entrega"
+    ]
+}
