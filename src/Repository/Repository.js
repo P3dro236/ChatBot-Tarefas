@@ -22,9 +22,9 @@ export const atividade_schema = {
             type: ["string", "null"],
             description: "Qualquer detalhe extra e relevante da mensagem (ex: 'em grupo de 4 pessoas', 'páginas 10 a 50', 'peso 2 na média'). Null se não houver."
         },
-        nora:{
-            type: ["boolean", "null"],
-            description: "A nota declarada pelo usuário, podendo ser tanto inteira tanto conter valores com virgula (ex: 3.5, 12, 15). Null se não houver."
+        nota:{
+            type: ["number", "null"],
+            description: "A nota declarada pelo usuário para o valor da atividade, o valor numerico deve obrigatoriamente estar descrito aqui, e nao em outros lugares como observacoes, podendo ser tanto inteira tanto conter valores com virgula (ex: 3.5, 12, 15). Null se não houver."
         }
     },
     required: [
