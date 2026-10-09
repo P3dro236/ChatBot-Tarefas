@@ -14,6 +14,7 @@ export const msg_handler = async (msg) =>{
         }
         return
     }
+    
     try {
         const response = await text_to_json(msg.body);
         const task = new Task(response.titulo, response.materia, response.tipo, response.data_entrega, response.observacoes, response.nota,)
