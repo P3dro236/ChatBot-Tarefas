@@ -28,7 +28,7 @@ export const atividade_schema = {
         },
         sucesso:{
             type: "boolean",
-            descruption: "Caso a mensagem não faça sentido com a proposta de sua função, ou caso, deve retornar como false, em caso de compreensão da mensagem e correta tradução para json o valor deve ser true."
+            descruption: "Caso a mensagem não faça sentido com a proposta de sua função, ou caso o entendimento geral não seja feito, deve retornar como false, em caso de compreensão da mensagem e correta tradução para json o valor deve ser true."
         },
         retorno:{
             type: ["string","null"],
