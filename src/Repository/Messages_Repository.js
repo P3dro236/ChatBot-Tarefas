@@ -8,4 +8,9 @@ export const sucess_task_msg = (task) => {
     return `*Titulo*: ${task.titulo}
 *Materia*: ${task.materia}
 *Nota*: ${task.nota}
-*Data* de entrega: ${task.data_entrega}`}
+*Data* de entrega: ${readable_date(task.data_entrega)}`}
+
+const readable_date = (date) =>{
+    const [ano, mes, dia] = date.split("-");
+    return `${dia}/${mes}`;
+}
