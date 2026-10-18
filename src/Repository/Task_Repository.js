@@ -28,11 +28,11 @@ export const atividade_schema = {
         },
         sucesso:{
             type: "boolean",
-            descruption: "Caso a mensagem não faça sentido com a proposta de sua função, ou caso o entendimento geral não seja feito, deve retornar como false, em caso de compreensão da mensagem e correta tradução para json o valor deve ser true."
+            descruption: "Caso a mensagem não faça sentido com a proposta de sua função, ou caso o entendimento geral não seja feito, deve retornar como false, em caso de compreensão da mensagem e correta tradução para json o valor deve ser true. Caso uma das informações obrigatorias dentro de required for vazio, deve retornar o valor como false"
         },
         retorno:{
             type: ["string","null"],
-            description: "Caso o sucesso seja falso, deve deixar uma mensagem de porque o erro aconteceu, caso o sucesso seja true então o valor deve ser null EX(Não consegui entender, repita por favor.)"
+            description: "Caso o sucesso seja falso, deve deixar uma mensagem de porque o erro aconteceu ou qual campo obrigatorio esta em branco (EX: qual a materia? , qual a data?), deixe um erro detalhado, caso tenha faltado algum campo deixe claro qual campo faltou, caso o sucesso seja true então o valor deve ser null EX(Não consegui entender, repita por favor.), faça o possível para agir como uma conversa normal, seja despojado e o mais curto possivel, fazendo com que a mensagem seja entendida corretamente"
         }
     },
     required: [
