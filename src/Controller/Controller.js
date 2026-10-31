@@ -48,7 +48,7 @@ export const msg_handler = async (msg) =>{
         if(response.sucesso == false){
             await msg.reply(response.retorno)
         } else{
-            const task = new Task(response.titulo, response.materia, response.tipo, response.data_entrega, response.observacoes, response.nota, response.retorno)
+            const task = new Task(msg.from ,response.titulo, response.materia, response.tipo, response.data_entrega, response.observacoes, response.nota, response.retorno)
             await msg.reply(`Atividade Salva!  ✅`)
             await msg.reply(sucess_task_msg(task))
         }
