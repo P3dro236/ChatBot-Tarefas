@@ -6,6 +6,8 @@ import {
 } from "../Repository/Task_Repository.js";
 
 const DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite";
+const MAX_HISTORY_MESSAGES = 10;
+const MAX_HISTORY_TEXT_LENGTH = 1000;
 const OVERLOAD_STATUS_CODES = new Set([429, 503]);
 const NOT_FOUND_STATUS_CODES = new Set([404]);
 
@@ -126,9 +128,45 @@ export function isGeminiOverloadedError(error) {
     return OVERLOAD_ERROR_PATTERNS.some(({ pattern }) => pattern.test(signals));
 }
 
-export function buildPrompt(input, currentDate = new Date()) {
+export function formatConversationHistory(history) {
+    if (!Array.isArray(history) || history.length === 0) {
+        return "";
+    }
+
+    const validEntries = history.filter(
+        (item) =>
+            item &&
+            typeof item === "object" &&
+            (item.role === "user" || item.role === "assistant") &&
+            typeof item.text === "string" &&
+            item.text.trim().length > 0
+    );
+
+    if (validEntries.length === 0) {
+        return "";
+    }
+
+    return validEntries
+        .slice(-MAX_HISTORY_MESSAGES)
+        .map((item) => {
+            const speaker = item.role === "user" ? "Usuário" : "Assistente";
+            const safeText = item.text
+                .trim()
+                .replace(/\s+/g, " ")
+                .slice(0, MAX_HISTORY_TEXT_LENGTH);
+            return `- ${speaker}: ${safeText}`;
+        })
+        .join("\n");
+}
+
+export function buildPrompt(input, currentDate = new Date(), history = []) {
     const safeDate = resolveCurrentDate(currentDate);
     const formattedDate = formatLocalDateTime(safeDate);
+    const normalizedInput = typeof input === "string" ? input : String(input ?? "");
+    const formattedHistory = formatConversationHistory(history);
+    const historySection = formattedHistory
+        ? `\n\nHistórico recente da conversa (use como contexto para complementar informações já informadas anteriormente e perguntar apenas o que ainda estiver faltando):\n${formattedHistory}`
+        : "";
 
     return `
 Você é um assistente especializado na extração estruturada de dados para organização de tarefas acadêmicas.
@@ -136,18 +174,21 @@ Você é um assistente especializado na extração estruturada de dados para org
 Contexto de Tempo:
 - Data atual (horário local): ${formattedDate}
 
-Sua missão é analisar a mensagem do usuário e extrair os parâmetros para cadastrar a atividade.
+Sua missão é analisar a mensagem do usuário (considerando o histórico recente quando houver) e extrair os parâmetros para cadastrar a atividade.
 
 Regras estritas:
 1. Responda ÚNICA E EXCLUSIVAMENTE com um objeto JSON válido. Não inclua saudações, explicações ou formatação markdown (json).
-2. Não invente informações. Se um dado não estiver explícito ou implícito na mensagem, retorne null.
-3. Datas relativas: Converta termos como "amanhã", "depois de amanhã" ou "quinta que vem" para datas exatas no formato YYYY-MM-DD, usando a data atual como base.
-4. Título conciso: Crie um "titulo" claro e direto baseado na ação solicitada.
-5. Caso a mensagem não faça sentido a sua função, deve retornar todas.
-6. Para melhor organização, sempre deixe as primeiras letras maiusculas, por exemplo, Matematica e Banco de dados.
+2. Não invente informações. Se um dado não estiver explícito ou implícito na mensagem atual nem no histórico recente da conversa, retorne null.
+3. Uso do histórico: Combine os dados da mensagem anterior no histórico com a mensagem atual para preencher todos os campos da tarefa (titulo, materia, tipo, data_entrega, observacoes e nota).
+4. Datas relativas: Converta termos como "amanhã", "depois de amanhã" ou "quinta que vem" para datas exatas no formato YYYY-MM-DD, usando a data atual como base.
+5. Título conciso: Crie um "titulo" claro e direto baseado na ação solicitada.
+6. Campos obrigatórios faltantes: Se faltar alguma informação obrigatória (como matéria ou data de entrega) mesmo após considerar o histórico, retorne "sucesso": false e preencha "retorno" perguntando de forma curta, natural e amigável apenas o que ainda está faltando, usando a mensagem anterior como base.
+7. Mensagem fora de contexto: Se a mensagem não fizer sentido para organização de tarefas acadêmicas, retorne "sucesso": false com um "retorno" amigável.
+8. Quando as informações necessárias estiverem preenchidas, retorne "sucesso": true e "retorno": null.
+9. Para melhor organização, sempre deixe as primeiras letras maiúsculas em títulos e matérias, por exemplo, Matemática e Banco de Dados.${historySection}
 
 Mensagem:
-${input}`.trim();
+${normalizedInput}`.trim();
 }
 
 export function resolveCandidateModels(depsModels) {
@@ -207,7 +248,7 @@ export async function text_to_json(input, deps = {}) {
         throw new Error("Nenhum modelo Gemini configurado.");
     }
 
-    const prompt = buildPrompt(input, currentDate);
+    const prompt = buildPrompt(input, currentDate, deps.history);
     let lastError;
     let firstOverloadError = null;
 

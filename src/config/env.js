@@ -78,6 +78,10 @@ const envSchema = z.object({
     CHROME_EXECUTABLE_PATH: z.preprocess(
         emptyStringToUndefined,
         z.string().trim().min(1).optional()
+    ),
+    ADMIN_TEST_NUMBER: z.preprocess(
+        emptyStringToUndefined,
+        z.string().trim().min(1).max(100).optional()
     )
 });
 
