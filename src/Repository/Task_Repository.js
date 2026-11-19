@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Task } from "../Model/Task.js";
 
 export const TASK_TYPES = [
     "trabalho",
@@ -145,3 +146,177 @@ export const updateTaskBodySchema = taskFieldsSchema
         (data) => Object.keys(data).some((key) => data[key] !== undefined),
         { message: "Informe ao menos um campo para atualizar." }
     );
+
+function normalizeWhatsappId(whatsappId) {
+    if (typeof whatsappId !== "string" || whatsappId.trim().length === 0) {
+        throw new Error("whatsappId deve ser uma string não vazia.");
+    }
+
+    return whatsappId.trim();
+}
+
+export function createInMemoryTaskRepository() {
+    const storage = new Map();
+
+    function getOrCreateBucket(normalizedId) {
+        let bucket = storage.get(normalizedId);
+        if (!bucket) {
+            bucket = { tasks: [] };
+            storage.set(normalizedId, bucket);
+        }
+        return bucket;
+    }
+
+    function reindexBucket(bucket) {
+        bucket.tasks.forEach((task, index) => {
+            const sequentialId = index + 1;
+            task.id = sequentialId;
+            task.user_task_id = sequentialId;
+        });
+    }
+
+    function createTask(whatsappId, taskData) {
+        const normalizedId = normalizeWhatsappId(whatsappId);
+
+        if (!taskData || typeof taskData !== "object" || Array.isArray(taskData)) {
+            throw new Error("Dados da tarefa inválidos.");
+        }
+
+        const bucket = getOrCreateBucket(normalizedId);
+        const taskId = bucket.tasks.length + 1;
+        const task = new Task({
+            ...taskData,
+            id: taskId,
+            user_task_id: taskId,
+            whatsapp_id: normalizedId,
+        });
+
+        const storedTask = {
+            id: task.id,
+            user_task_id: task.user_task_id,
+            whatsapp_id: task.whatsapp_id,
+            titulo: task.titulo ?? null,
+            materia: task.materia ?? null,
+            tipo: task.tipo ?? null,
+            data_entrega: task.data_entrega ?? null,
+            observacoes: task.observacoes ?? null,
+            nota: task.nota ?? null,
+            created_at: new Date().toISOString(),
+        };
+
+        bucket.tasks.push(storedTask);
+        return { ...storedTask };
+    }
+
+    function listTasks(options = {}) {
+        const whatsappId = options?.whatsappId;
+
+        if (whatsappId !== undefined && whatsappId !== null) {
+            const normalizedId = normalizeWhatsappId(whatsappId);
+            const bucket = storage.get(normalizedId);
+            if (!bucket) {
+                return [];
+            }
+
+            return bucket.tasks
+                .map((task) => ({ ...task }))
+                .sort((a, b) => a.id - b.id);
+        }
+
+        const allTasks = [];
+        for (const bucket of storage.values()) {
+            for (const task of bucket.tasks) {
+                allTasks.push({ ...task });
+            }
+        }
+
+        return allTasks.sort((a, b) => {
+            if (a.whatsapp_id < b.whatsapp_id) {
+                return -1;
+            }
+            if (a.whatsapp_id > b.whatsapp_id) {
+                return 1;
+            }
+            return a.id - b.id;
+        });
+    }
+
+    function deleteUserTask(whatsappId, id) {
+        const normalizedId = normalizeWhatsappId(whatsappId);
+
+        if (!Number.isInteger(id) || id < 1) {
+            return false;
+        }
+
+        const bucket = storage.get(normalizedId);
+        if (!bucket) {
+            return false;
+        }
+
+        const index = bucket.tasks.findIndex((task) => task.id === id);
+        if (index === -1) {
+            return false;
+        }
+
+        bucket.tasks.splice(index, 1);
+        reindexBucket(bucket);
+        return true;
+    }
+
+    function deleteTask(id, options = {}) {
+        const whatsappId = options?.whatsappId;
+
+        if (whatsappId === undefined || whatsappId === null) {
+            throw new Error(
+                "whatsappId é obrigatório para remover tarefa no repositório em memória."
+            );
+        }
+
+        return deleteUserTask(whatsappId, id);
+    }
+
+    function clear(whatsappId) {
+        if (whatsappId !== undefined && whatsappId !== null) {
+            const normalizedId = normalizeWhatsappId(whatsappId);
+            const bucket = storage.get(normalizedId);
+            if (!bucket) {
+                return 0;
+            }
+
+            const removedCount = bucket.tasks.length;
+            storage.delete(normalizedId);
+            return removedCount;
+        }
+
+        let totalRemoved = 0;
+        for (const bucket of storage.values()) {
+            totalRemoved += bucket.tasks.length;
+        }
+        storage.clear();
+        return totalRemoved;
+    }
+
+    function count(whatsappId) {
+        if (whatsappId !== undefined && whatsappId !== null) {
+            const normalizedId = normalizeWhatsappId(whatsappId);
+            return storage.get(normalizedId)?.tasks.length ?? 0;
+        }
+
+        let total = 0;
+        for (const bucket of storage.values()) {
+            total += bucket.tasks.length;
+        }
+        return total;
+    }
+
+    return {
+        createTask,
+        listTasks,
+        deleteUserTask,
+        deleteTask,
+        clear,
+        count,
+    };
+}
+
+export const testTaskStorage = createInMemoryTaskRepository();

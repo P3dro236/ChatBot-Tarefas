@@ -18,7 +18,22 @@ const SCHEMA_STATEMENTS = Object.freeze([
         nota NUMERIC,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );`,
-    `CREATE INDEX IF NOT EXISTS idx_task_user_id ON task (user_id);`
+    `DO $$
+     BEGIN
+         IF EXISTS (
+             SELECT 1
+             FROM information_schema.columns
+             WHERE table_schema = current_schema()
+               AND table_name = 'task'
+               AND column_name = 'user_task_id'
+               AND is_nullable = 'NO'
+         ) THEN
+             ALTER TABLE task ALTER COLUMN user_task_id DROP NOT NULL;
+         END IF;
+     END $$;`,
+    `DROP INDEX IF EXISTS idx_task_user_task_id;`,
+    `DROP INDEX IF EXISTS idx_task_user_id;`,
+    `CREATE INDEX IF NOT EXISTS idx_task_user_created_id ON task (user_id, created_at ASC, id ASC);`
 ]);
 
 let defaultPool = null;

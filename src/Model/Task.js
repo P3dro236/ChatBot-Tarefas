@@ -20,6 +20,7 @@ export class Task {
     constructor(firstArg = {}, ...restArgs) {
         const {
             id = null,
+            user_task_id = null,
             whatsapp_id = null,
             titulo = null,
             materia = null,
@@ -32,6 +33,7 @@ export class Task {
         } = normalizeTaskInput(firstArg, restArgs);
 
         this.id = id;
+        this.user_task_id = user_task_id ?? id;
         this.whatsapp_id = whatsapp_id;
         this.titulo = titulo;
         this.materia = materia;
