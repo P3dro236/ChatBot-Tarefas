@@ -2,6 +2,7 @@ import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 
+import { getEnv } from "../../src/config/env.js";
 import {
     closePool,
     createPool,
@@ -9,9 +10,14 @@ import {
 } from "../../src/Server/PgConnect.js";
 import { startHttpServer } from "../../src/Server/Server.js";
 import { createTaskDbRepository } from "../../src/Repository/Task_Db_Repository.js";
+import { testTaskStorage } from "../../src/Repository/Task_Repository.js";
 import {
+    conversationMemory,
     EMPTY_TASKS_MESSAGE,
+    formatTaskDeletedMessage,
     TASK_SAVED_MESSAGE,
+    TEST_STORAGE_CLEARED_MESSAGE,
+    UNAUTHORIZED_ADMIN_COMMAND_MESSAGE,
 } from "../../src/Repository/Messages_Repository.js";
 
 function closeHttpServer(server) {
@@ -33,6 +39,9 @@ describe("Integração E2E Real - HTTP Express + Gemini + PostgreSQL", () => {
     const cmdWhatsappId = `test_e2e_cmd_${runTag}@c.us`;
     const emptyWhatsappId = `test_e2e_empty_${runTag}@c.us`;
     const geminiWhatsappId = `test_e2e_gemini_${runTag}@c.us`;
+    const memoryWhatsappId = `test_e2e_memory_${runTag}@c.us`;
+    const unauthWhatsappId = `test_e2e_unauth_${runTag}@c.us`;
+    const unauthGroupId = `test_e2e_group_${runTag}@g.us`;
     const crudWhatsappId = `test_e2e_crud_${runTag}@c.us`;
     const aliasWhatsappId = `test_e2e_alias_${runTag}@c.us`;
     const ownerWhatsappId = `test_e2e_owner_${runTag}@c.us`;
@@ -42,6 +51,9 @@ describe("Integração E2E Real - HTTP Express + Gemini + PostgreSQL", () => {
         cmdWhatsappId,
         emptyWhatsappId,
         geminiWhatsappId,
+        memoryWhatsappId,
+        unauthWhatsappId,
+        unauthGroupId,
         crudWhatsappId,
         aliasWhatsappId,
         ownerWhatsappId,
@@ -63,6 +75,8 @@ describe("Integração E2E Real - HTTP Express + Gemini + PostgreSQL", () => {
     });
 
     after(async () => {
+        testTaskStorage.clear();
+        conversationMemory.clearHistory();
         try {
             await closeHttpServer(server);
         } finally {
@@ -168,26 +182,52 @@ describe("Integração E2E Real - HTTP Express + Gemini + PostgreSQL", () => {
     });
 
     it(
-        "POST /message cria tarefa via Gemini real, persiste no PostgreSQL e lista em 'todas'",
-        { timeout: 60_000 },
+        "POST /message cria tarefas via Gemini real (com *ID* e omissão de vazios), lista consolidada em 'todas' e apaga por ID",
+        { timeout: 90_000 },
         async () => {
-            const createRes = await fetch(`${baseUrl}/message`, {
+            const firstCreateRes = await fetch(`${baseUrl}/message`, {
                 method: "POST",
                 headers: { "content-type": "application/json" },
                 body: JSON.stringify({
                     from: geminiWhatsappId,
-                    body: "Trabalho de Banco de Dados para entregar dia 25/11/2026 valendo 20 pontos",
+                    body: "Trabalho de Banco de Dados para entregar dia 25/11/2026",
                 }),
             });
-            const createBody = await createRes.json();
+            const firstCreateBody = await firstCreateRes.json();
 
-            assert.equal(createRes.status, 200);
-            assert.equal(createBody.from, geminiWhatsappId);
-            assert.equal(createBody.replies.length, 2);
-            assert.equal(createBody.replies[0], TASK_SAVED_MESSAGE);
-            assert.ok(createBody.replies[1].includes("*Titulo*:"));
-            assert.ok(createBody.replies[1].includes("*Nota*: 20"));
-            assert.ok(createBody.replies[1].includes("*Data* de entrega: 25/11"));
+            assert.equal(firstCreateRes.status, 200);
+            assert.equal(firstCreateBody.from, geminiWhatsappId);
+            assert.equal(firstCreateBody.replies.length, 2);
+            assert.equal(firstCreateBody.replies[0], TASK_SAVED_MESSAGE);
+            assert.ok(firstCreateBody.replies[1].includes("*ID*: 1"));
+            assert.ok(firstCreateBody.replies[1].includes("*Titulo*:"));
+            assert.ok(
+                firstCreateBody.replies[1].includes("*Data* de entrega: 25/11")
+            );
+            assert.equal(firstCreateBody.replies[1].includes("*Nota*:"), false);
+            assert.equal(
+                firstCreateBody.replies[1].includes("Não informada"),
+                false
+            );
+
+            const secondCreateRes = await fetch(`${baseUrl}/message`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                    from: geminiWhatsappId,
+                    body: "Prova de Redes dia 30/11/2026 valendo 20 pontos",
+                }),
+            });
+            const secondCreateBody = await secondCreateRes.json();
+
+            assert.equal(secondCreateRes.status, 200);
+            assert.equal(secondCreateBody.replies.length, 2);
+            assert.equal(secondCreateBody.replies[0], TASK_SAVED_MESSAGE);
+            assert.ok(secondCreateBody.replies[1].includes("*ID*: 2"));
+            assert.ok(secondCreateBody.replies[1].includes("*Nota*: 20"));
+            assert.ok(
+                secondCreateBody.replies[1].includes("*Data* de entrega: 30/11")
+            );
 
             const listRes = await fetch(`${baseUrl}/message`, {
                 method: "POST",
@@ -198,8 +238,304 @@ describe("Integração E2E Real - HTTP Express + Gemini + PostgreSQL", () => {
 
             assert.equal(listRes.status, 200);
             assert.equal(listBody.replies.length, 1);
+            assert.ok(listBody.replies[0].includes("*ID*: 1"));
+            assert.ok(listBody.replies[0].includes("*ID*: 2"));
             assert.ok(listBody.replies[0].includes("*Nota*: 20"));
-            assert.ok(listBody.replies[0].includes("*Data* de entrega: 25/11"));
+            assert.ok(
+                listBody.replies[0].includes("*Data* de entrega: 25/11")
+            );
+            assert.ok(
+                listBody.replies[0].includes("*Data* de entrega: 30/11")
+            );
+
+            const deleteFirstRes = await fetch(`${baseUrl}/message`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                    from: geminiWhatsappId,
+                    body: "apagar 1",
+                }),
+            });
+            const deleteFirstBody = await deleteFirstRes.json();
+
+            assert.equal(deleteFirstRes.status, 200);
+            assert.deepEqual(deleteFirstBody.replies, [
+                formatTaskDeletedMessage(1, 1),
+            ]);
+
+            const encodedGeminiUser = encodeURIComponent(geminiWhatsappId);
+            const remainingRes = await fetch(
+                `${baseUrl}/task?whatsapp_id=${encodedGeminiUser}`
+            );
+            const remainingTasks = await remainingRes.json();
+
+            assert.equal(remainingRes.status, 200);
+            assert.equal(remainingTasks.length, 1);
+            assert.equal(remainingTasks[0].user_task_id, 1);
+
+            const listReindexedRes = await fetch(`${baseUrl}/message`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ from: geminiWhatsappId, body: "todas" }),
+            });
+            const listReindexedBody = await listReindexedRes.json();
+
+            assert.equal(listReindexedRes.status, 200);
+            assert.equal(listReindexedBody.replies.length, 1);
+            assert.ok(listReindexedBody.replies[0].includes("*ID*: 1"));
+            assert.ok(listReindexedBody.replies[0].includes("*Nota*: 20"));
+            assert.ok(listReindexedBody.replies[0].includes("30/11"));
+            assert.ok(!listReindexedBody.replies[0].includes("*ID*: 2"));
+
+            const deleteSecondRes = await fetch(`${baseUrl}/message`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                    from: geminiWhatsappId,
+                    body: "apagar 1",
+                }),
+            });
+            const deleteSecondBody = await deleteSecondRes.json();
+
+            assert.equal(deleteSecondRes.status, 200);
+            assert.deepEqual(deleteSecondBody.replies, [
+                formatTaskDeletedMessage(1, 0),
+            ]);
+
+            const emptyAfterDeleteRes = await fetch(`${baseUrl}/message`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ from: geminiWhatsappId, body: "todas" }),
+            });
+            const emptyAfterDeleteBody = await emptyAfterDeleteRes.json();
+
+            assert.equal(emptyAfterDeleteRes.status, 200);
+            assert.deepEqual(emptyAfterDeleteBody.replies, [
+                EMPTY_TASKS_MESSAGE,
+            ]);
+        }
+    );
+
+    it(
+        "POST /message preserva memória de conversa multi-turno com Gemini real e persiste ao completar no PostgreSQL",
+        { timeout: 90_000 },
+        async () => {
+            const encodedMemoryUser = encodeURIComponent(memoryWhatsappId);
+            conversationMemory.clearHistory(memoryWhatsappId);
+
+            try {
+                const step1Res = await fetch(`${baseUrl}/message`, {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({
+                        from: memoryWhatsappId,
+                        body: "Prova amanhã",
+                    }),
+                });
+                const step1Body = await step1Res.json();
+
+                assert.equal(step1Res.status, 200);
+                assert.equal(step1Body.replies.length, 1);
+                assert.equal(typeof step1Body.replies[0], "string");
+                assert.ok(step1Body.replies[0].trim().length > 0);
+                assert.notEqual(step1Body.replies[0], TASK_SAVED_MESSAGE);
+
+                const tasksBeforeCompletionRes = await fetch(
+                    `${baseUrl}/task?whatsapp_id=${encodedMemoryUser}`
+                );
+                const tasksBeforeCompletion =
+                    await tasksBeforeCompletionRes.json();
+                assert.equal(tasksBeforeCompletionRes.status, 200);
+                assert.deepEqual(tasksBeforeCompletion, []);
+
+                const step2Res = await fetch(`${baseUrl}/message`, {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({
+                        from: memoryWhatsappId,
+                        body: "A matéria é História e vale 10 pontos",
+                    }),
+                });
+                const step2Body = await step2Res.json();
+
+                assert.equal(step2Res.status, 200);
+                assert.equal(step2Body.replies.length, 2);
+                assert.equal(step2Body.replies[0], TASK_SAVED_MESSAGE);
+                assert.ok(step2Body.replies[1].includes("*ID*: 1"));
+                assert.ok(step2Body.replies[1].includes("*Nota*: 10"));
+
+                const tasksAfterCompletionRes = await fetch(
+                    `${baseUrl}/task?whatsapp_id=${encodedMemoryUser}`
+                );
+                const tasksAfterCompletion =
+                    await tasksAfterCompletionRes.json();
+
+                assert.equal(tasksAfterCompletionRes.status, 200);
+                assert.equal(tasksAfterCompletion.length, 1);
+                assert.equal(tasksAfterCompletion[0].user_task_id, 1);
+                assert.equal(tasksAfterCompletion[0].nota, 10);
+                assert.equal(tasksAfterCompletion[0].tipo, "prova");
+                assert.match(
+                    tasksAfterCompletion[0].materia ?? "",
+                    /hist[oó]ria/i
+                );
+                assert.deepEqual(
+                    conversationMemory.getHistory(memoryWhatsappId),
+                    []
+                );
+            } finally {
+                conversationMemory.clearHistory(memoryWhatsappId);
+            }
+        }
+    );
+
+    it(
+        "POST /message bloqueia /teste e /teste-limpar para não autorizados e executa simulação isolada para ADMIN_TEST_NUMBER",
+        { timeout: 90_000 },
+        async (t) => {
+            const unauthTestRes = await fetch(`${baseUrl}/message`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                    from: unauthWhatsappId,
+                    body: "/teste",
+                }),
+            });
+            const unauthTestBody = await unauthTestRes.json();
+            assert.equal(unauthTestRes.status, 200);
+            assert.deepEqual(unauthTestBody.replies, [
+                UNAUTHORIZED_ADMIN_COMMAND_MESSAGE,
+            ]);
+
+            const unauthClearRes = await fetch(`${baseUrl}/message`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                    from: unauthWhatsappId,
+                    body: "/teste-limpar",
+                }),
+            });
+            const unauthClearBody = await unauthClearRes.json();
+            assert.equal(unauthClearRes.status, 200);
+            assert.deepEqual(unauthClearBody.replies, [
+                UNAUTHORIZED_ADMIN_COMMAND_MESSAGE,
+            ]);
+
+            const groupTestRes = await fetch(`${baseUrl}/message`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                    from: unauthGroupId,
+                    body: "/teste",
+                }),
+            });
+            const groupTestBody = await groupTestRes.json();
+            assert.equal(groupTestRes.status, 200);
+            assert.deepEqual(groupTestBody.replies, [
+                UNAUTHORIZED_ADMIN_COMMAND_MESSAGE,
+            ]);
+
+            const configuredAdmin = getEnv().ADMIN_TEST_NUMBER;
+            await t.test(
+                "executa /teste e /teste-limpar isolados com Gemini real quando ADMIN_TEST_NUMBER está definido",
+                {
+                    skip: !configuredAdmin
+                        ? "ADMIN_TEST_NUMBER não configurado"
+                        : false,
+                    timeout: 90_000,
+                },
+                async () => {
+                    const adminWhatsappId = configuredAdmin.includes("@")
+                        ? configuredAdmin
+                        : `${configuredAdmin}@c.us`;
+                    const adminGroupId = `${adminWhatsappId.split("@")[0]}@g.us`;
+
+                    const adminGroupRes = await fetch(`${baseUrl}/message`, {
+                        method: "POST",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify({
+                            from: adminGroupId,
+                            body: "/teste",
+                        }),
+                    });
+                    const adminGroupBody = await adminGroupRes.json();
+                    assert.equal(adminGroupRes.status, 200);
+                    assert.deepEqual(adminGroupBody.replies, [
+                        UNAUTHORIZED_ADMIN_COMMAND_MESSAGE,
+                    ]);
+
+                    testTaskStorage.clear();
+                    const beforeAdminTasks = await repo.listTasks({
+                        whatsappId: adminWhatsappId,
+                    });
+
+                    try {
+                        const adminTestRes = await fetch(`${baseUrl}/message`, {
+                            method: "POST",
+                            headers: { "content-type": "application/json" },
+                            body: JSON.stringify({
+                                from: adminWhatsappId,
+                                body: "/teste",
+                            }),
+                        });
+                        const adminTestBody = await adminTestRes.json();
+
+                        assert.equal(adminTestRes.status, 200);
+                        assert.equal(adminTestBody.replies.length, 1);
+                        assert.ok(
+                            adminTestBody.replies[0].includes(
+                                "Modo Teste Isolado"
+                            )
+                        );
+                        assert.ok(
+                            adminTestBody.replies[0].includes("Simulação 1")
+                        );
+                        assert.ok(
+                            adminTestBody.replies[0].includes("Simulação 2")
+                        );
+                        assert.ok(
+                            adminTestBody.replies[0].includes(
+                                "Total no storage de teste:"
+                            )
+                        );
+                        assert.ok(testTaskStorage.count(adminWhatsappId) > 0);
+
+                        const afterAdminTasks = await repo.listTasks({
+                            whatsappId: adminWhatsappId,
+                        });
+                        assert.equal(
+                            afterAdminTasks.length,
+                            beforeAdminTasks.length
+                        );
+
+                        const adminClearRes = await fetch(
+                            `${baseUrl}/message`,
+                            {
+                                method: "POST",
+                                headers: { "content-type": "application/json" },
+                                body: JSON.stringify({
+                                    from: adminWhatsappId,
+                                    body: "/teste-limpar",
+                                }),
+                            }
+                        );
+                        const adminClearBody = await adminClearRes.json();
+
+                        assert.equal(adminClearRes.status, 200);
+                        assert.deepEqual(adminClearBody.replies, [
+                            TEST_STORAGE_CLEARED_MESSAGE,
+                        ]);
+                        assert.equal(
+                            testTaskStorage.count(adminWhatsappId),
+                            0
+                        );
+                        assert.equal(testTaskStorage.count(), 0);
+                    } finally {
+                        testTaskStorage.clear();
+                        conversationMemory.clearHistory(adminWhatsappId);
+                    }
+                }
+            );
         }
     );
 

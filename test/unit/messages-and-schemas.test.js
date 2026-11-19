@@ -1,8 +1,13 @@
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import {
     commands,
+    createConversationMemory,
+    EMPTY_TASKS_MESSAGE,
+    formatTaskDeletedMessage,
+    formatTaskNotFoundMessage,
+    formatTasksListMessage,
     readable_date,
     sucess_task_msg,
 } from "../../src/Repository/Messages_Repository.js";
@@ -10,9 +15,11 @@ import {
     TASK_TYPES,
     atividade_schema,
     aiTaskResponseSchema,
+    createInMemoryTaskRepository,
     createTaskBodySchema,
     updateTaskBodySchema,
     isValidCalendarDate,
+    testTaskStorage,
 } from "../../src/Repository/Task_Repository.js";
 import { Task } from "../../src/Model/Task.js";
 import { loadEnv } from "../../src/config/env.js";
@@ -57,49 +64,254 @@ describe("Messages_Repository", () => {
     });
 
     describe("sucess_task_msg", () => {
-        it("formata mensagem completa com todos os campos informados", () => {
-            const msg = sucess_task_msg({
+        it("formata mensagem completa com ID, todos os campos informados e observações", () => {
+            const msgWithUserTaskId = sucess_task_msg({
+                id: 99,
+                user_task_id: 1,
                 titulo: "Prova de Cálculo",
                 materia: "Matemática",
                 nota: 15,
                 data_entrega: "2026-11-25",
+                observacoes: "Capítulos 1 a 3",
             });
 
             assert.equal(
-                msg,
-                `*Titulo*: Prova de Cálculo
+                msgWithUserTaskId,
+                `*ID*: 1
+*Titulo*: Prova de Cálculo
 *Materia*: Matemática
 *Nota*: 15
-*Data* de entrega: 25/11`
+*Data* de entrega: 25/11
+*Observacoes*: Capítulos 1 a 3`
+            );
+
+            const msgWithIdOnly = sucess_task_msg({
+                id: 2,
+                titulo: "Seminário",
+                materia: "Redes",
+                nota: 10,
+                data_entrega: "2026-12-01",
+            });
+
+            assert.equal(
+                msgWithIdOnly,
+                `*ID*: 2
+*Titulo*: Seminário
+*Materia*: Redes
+*Nota*: 10
+*Data* de entrega: 01/12`
             );
         });
 
-        it("preserva nota igual a 0 sem substituir por fallback", () => {
+        it("preserva nota igual a 0 sem omitir o campo", () => {
             const msg = sucess_task_msg({
+                user_task_id: 3,
                 titulo: "Lista de Exercícios",
                 materia: "Física",
                 nota: 0,
                 data_entrega: "2026-06-10",
             });
 
+            assert.match(msg, /\*ID\*: 3/);
             assert.match(msg, /\*Nota\*: 0/);
         });
 
-        it("usa 'Não informada' como fallback para campos nulos, indefinidos ou vazios", () => {
-            const msg = sucess_task_msg({
+        it("omite campos vazios, nulos ou inválidos em vez de exibir 'Não informada'", () => {
+            const partialMsg = sucess_task_msg({
+                user_task_id: 4,
+                titulo: "Trabalho de História",
+                materia: "   ",
+                nota: null,
+                data_entrega: "2026-02-31",
+                observacoes: null,
+            });
+
+            assert.equal(
+                partialMsg,
+                `*ID*: 4
+*Titulo*: Trabalho de História`
+            );
+            assert.equal(partialMsg.includes("*Materia*:"), false);
+            assert.equal(partialMsg.includes("*Nota*:"), false);
+            assert.equal(partialMsg.includes("*Data* de entrega:"), false);
+            assert.equal(partialMsg.includes("*Observacoes*:"), false);
+            assert.equal(partialMsg.includes("Não informada"), false);
+
+            const allEmptyMsg = sucess_task_msg({
                 titulo: "  ",
                 materia: null,
                 nota: undefined,
                 data_entrega: null,
+                observacoes: "",
             });
 
+            assert.equal(allEmptyMsg, "");
+        });
+    });
+
+    describe("formatTasksListMessage e mensagens auxiliares", () => {
+        it("retorna EMPTY_TASKS_MESSAGE quando a lista está vazia ou sem itens formatáveis", () => {
+            assert.equal(formatTasksListMessage([]), EMPTY_TASKS_MESSAGE);
+            assert.equal(formatTasksListMessage(null), EMPTY_TASKS_MESSAGE);
+            assert.equal(formatTasksListMessage([{}]), EMPTY_TASKS_MESSAGE);
+        });
+
+        it("consolida múltiplas tarefas em uma única string com todos os IDs e omissão de campos vazios", () => {
+            const message = formatTasksListMessage([
+                {
+                    user_task_id: 1,
+                    titulo: "Prova 1",
+                    materia: "Cálculo",
+                    nota: null,
+                    data_entrega: "2026-11-25",
+                    observacoes: "   ",
+                },
+                {
+                    user_task_id: 2,
+                    titulo: "Trabalho Final",
+                    materia: null,
+                    nota: 0,
+                    data_entrega: null,
+                    observacoes: "Em dupla",
+                },
+            ]);
+
+            assert.equal(typeof message, "string");
             assert.equal(
-                msg,
-                `*Titulo*: Não informada
-*Materia*: Não informada
-*Nota*: Não informada
-*Data* de entrega: Não informada`
+                message,
+                `Suas atividades:
+
+*ID*: 1
+*Titulo*: Prova 1
+*Materia*: Cálculo
+*Data* de entrega: 25/11
+
+──────────
+
+*ID*: 2
+*Titulo*: Trabalho Final
+*Nota*: 0
+*Observacoes*: Em dupla`
             );
+        });
+
+        it("formata mensagens de exclusão (com e sem aviso de reorganização) e ID não encontrado", () => {
+            assert.equal(
+                formatTaskDeletedMessage(3, 0),
+                "Atividade #3 apagada com sucesso! 🗑️"
+            );
+            assert.equal(
+                formatTaskDeletedMessage(3, 2),
+                "Atividade #3 apagada com sucesso! 🗑️\nOs IDs restantes foram reorganizados — digite *todas* para conferir."
+            );
+            assert.equal(
+                formatTaskDeletedMessage(3),
+                "Atividade #3 apagada com sucesso! 🗑️\nOs IDs restantes foram reorganizados — digite *todas* para conferir."
+            );
+            assert.equal(
+                formatTaskNotFoundMessage(7),
+                "Não encontrei nenhuma atividade com o ID 7."
+            );
+        });
+    });
+
+    describe("createConversationMemory", () => {
+        it("adiciona turnos user/assistant, ignora entradas inválidas e preserva cópias isoladas", () => {
+            const memory = createConversationMemory({
+                maxMessagesPerUser: 6,
+                ttlMs: 60_000,
+                maxUsers: 10,
+            });
+
+            memory.addMessage("user_a@c.us", "user", "  Prova amanhã  ", 1000);
+            memory.addMessage("user_a@c.us", "assistant", "Qual a matéria?", 1010);
+            memory.addMessage("user_a@c.us", "system", "Ignorar role inválido", 1020);
+            memory.addMessage("user_a@c.us", "user", "   ", 1030);
+            memory.addMessage("", "user", "Ignorar user vazio", 1040);
+
+            const history = memory.getHistory("user_a@c.us", 1050);
+            assert.deepEqual(history, [
+                { role: "user", text: "Prova amanhã", timestamp: 1000 },
+                { role: "assistant", text: "Qual a matéria?", timestamp: 1010 },
+            ]);
+
+            history[0].text = "mutado";
+            assert.equal(
+                memory.getHistory("user_a@c.us", 1050)[0].text,
+                "Prova amanhã"
+            );
+        });
+
+        it("respeita limite maxMessagesPerUser mantendo apenas os turnos mais recentes", () => {
+            const memory = createConversationMemory({
+                maxMessagesPerUser: 3,
+                ttlMs: 60_000,
+                maxUsers: 10,
+            });
+
+            memory.addMessage("user_1", "user", "msg 1", 100);
+            memory.addMessage("user_1", "assistant", "msg 2", 200);
+            memory.addMessage("user_1", "user", "msg 3", 300);
+            memory.addMessage("user_1", "assistant", "msg 4", 400);
+
+            assert.deepEqual(
+                memory.getHistory("user_1", 500).map((entry) => entry.text),
+                ["msg 2", "msg 3", "msg 4"]
+            );
+        });
+
+        it("expira mensagens após ttlMs", () => {
+            const memory = createConversationMemory({
+                maxMessagesPerUser: 6,
+                ttlMs: 1000,
+                maxUsers: 10,
+            });
+
+            memory.addMessage("user_ttl", "user", "Prova amanhã", 1000);
+            assert.equal(memory.getHistory("user_ttl", 2000).length, 1);
+            assert.deepEqual(memory.getHistory("user_ttl", 2001), []);
+        });
+
+        it("faz eviction do usuário mais antigo ao atingir maxUsers e poda expirados antes", () => {
+            const memory = createConversationMemory({
+                maxMessagesPerUser: 6,
+                ttlMs: 1000,
+                maxUsers: 2,
+            });
+
+            memory.addMessage("user_1", "user", "m1", 100);
+            memory.addMessage("user_2", "user", "m2", 200);
+            memory.addMessage("user_3", "user", "m3", 300);
+
+            assert.deepEqual(memory.getHistory("user_1", 400), []);
+            assert.equal(memory.getHistory("user_2", 400).length, 1);
+            assert.equal(memory.getHistory("user_3", 400).length, 1);
+
+            const memoryWithPrune = createConversationMemory({
+                maxMessagesPerUser: 6,
+                ttlMs: 500,
+                maxUsers: 2,
+            });
+            memoryWithPrune.addMessage("expired_user", "user", "antiga", 100);
+            memoryWithPrune.addMessage("active_user", "user", "recente", 700);
+            memoryWithPrune.addMessage("new_user", "user", "nova", 900);
+
+            assert.deepEqual(memoryWithPrune.getHistory("expired_user", 900), []);
+            assert.equal(memoryWithPrune.getHistory("active_user", 900).length, 1);
+            assert.equal(memoryWithPrune.getHistory("new_user", 900).length, 1);
+        });
+
+        it("clearHistory limpa apenas o usuário especificado ou todo o histórico", () => {
+            const memory = createConversationMemory();
+            memory.addMessage("u1", "user", "msg u1", 100);
+            memory.addMessage("u2", "user", "msg u2", 100);
+
+            memory.clearHistory("u1");
+            assert.deepEqual(memory.getHistory("u1", 200), []);
+            assert.equal(memory.getHistory("u2", 200).length, 1);
+
+            memory.clearHistory();
+            assert.deepEqual(memory.getHistory("u2", 200), []);
         });
     });
 });
@@ -335,6 +547,159 @@ describe("Task_Repository schemas e Model/Task", () => {
             assert.equal(task.retorno, null);
         });
     });
+
+    describe("createInMemoryTaskRepository e testTaskStorage", () => {
+        after(() => {
+            testTaskStorage.clear();
+        });
+
+        it("mantém numeração sequencial densa (1..N) por usuário após apagar o último ou o primeiro item", () => {
+            const repo = createInMemoryTaskRepository();
+            const userA = "user_a@c.us";
+            const userB = "user_b@c.us";
+
+            const a1 = repo.createTask(userA, {
+                titulo: "Prova A1",
+                tipo: "prova",
+                nota: 10,
+            });
+            const a2 = repo.createTask(userA, {
+                titulo: "Trabalho A2",
+                tipo: "trabalho",
+            });
+            const a3 = repo.createTask(userA, {
+                titulo: "Leitura A3",
+                tipo: "leitura",
+            });
+            const b1 = repo.createTask(userB, {
+                titulo: "Leitura B1",
+                tipo: "leitura",
+            });
+            const b2 = repo.createTask(userB, {
+                titulo: "Exercício B2",
+                tipo: "exercicio",
+            });
+
+            assert.deepEqual(
+                [a1.id, a2.id, a3.id],
+                [1, 2, 3]
+            );
+            assert.deepEqual(
+                [b1.id, b2.id],
+                [1, 2]
+            );
+
+            // Cenário 1: apagar o último item (3) faz a próxima atividade assumir o ID 3
+            assert.equal(repo.deleteUserTask(userA, 3), true);
+            assert.equal(repo.deleteUserTask(userA, 3), false);
+            assert.equal(repo.deleteUserTask(userA, 0), false);
+
+            const aNewThird = repo.createTask(userA, {
+                titulo: "Nova A3",
+                tipo: "prova",
+            });
+            assert.equal(aNewThird.id, 3);
+            assert.equal(aNewThird.user_task_id, 3);
+
+            // Cenário 2: [1, 2, 3, 4] -> apaga 1 -> antiga 2 vira 1, 3 vira 2, 4 vira 3
+            repo.createTask(userA, { titulo: "Quarta A4", tipo: "outro" });
+            assert.equal(repo.deleteUserTask(userA, 1), true);
+
+            const reindexedA = repo.listTasks({ whatsappId: userA });
+            assert.deepEqual(
+                reindexedA.map((t) => ({
+                    id: t.id,
+                    user_task_id: t.user_task_id,
+                    titulo: t.titulo,
+                })),
+                [
+                    { id: 1, user_task_id: 1, titulo: "Trabalho A2" },
+                    { id: 2, user_task_id: 2, titulo: "Nova A3" },
+                    { id: 3, user_task_id: 3, titulo: "Quarta A4" },
+                ]
+            );
+
+            const aNewFourth = repo.createTask(userA, {
+                titulo: "Nova A4",
+                tipo: "trabalho",
+            });
+            assert.equal(aNewFourth.id, 4);
+            assert.equal(aNewFourth.user_task_id, 4);
+
+            // Isolamento do userB preservado
+            assert.deepEqual(
+                repo.listTasks({ whatsappId: userB }).map((t) => ({
+                    id: t.id,
+                    titulo: t.titulo,
+                })),
+                [
+                    { id: 1, titulo: "Leitura B1" },
+                    { id: 2, titulo: "Exercício B2" },
+                ]
+            );
+        });
+
+        it("clear(whatsappId) limpa apenas o usuário informado e clear() zera tudo e reseta contadores para 1", () => {
+            const repo = createInMemoryTaskRepository();
+
+            repo.createTask("u1@c.us", { titulo: "T1", tipo: "outro" });
+            repo.createTask("u1@c.us", { titulo: "T2", tipo: "outro" });
+            repo.createTask("u2@c.us", { titulo: "T3", tipo: "outro" });
+
+            assert.equal(repo.count(), 3);
+            assert.equal(repo.count("u1@c.us"), 2);
+
+            const removedU1 = repo.clear("u1@c.us");
+            assert.equal(removedU1, 2);
+            assert.equal(repo.count("u1@c.us"), 0);
+            assert.equal(repo.count("u2@c.us"), 1);
+
+            const removedAll = repo.clear();
+            assert.equal(removedAll, 1);
+            assert.equal(repo.count(), 0);
+            assert.deepEqual(repo.listTasks(), []);
+
+            const restarted = repo.createTask("u2@c.us", {
+                titulo: "Reiniciada",
+                tipo: "trabalho",
+            });
+            assert.equal(restarted.id, 1);
+            assert.equal(restarted.user_task_id, 1);
+        });
+
+        it("singleton testTaskStorage opera em memória e é limpo corretamente", () => {
+            testTaskStorage.clear();
+            try {
+                const created = testTaskStorage.createTask("admin_unit@c.us", {
+                    titulo: "Simulação",
+                    tipo: "prova",
+                });
+                assert.equal(created.id, 1);
+                assert.equal(testTaskStorage.count("admin_unit@c.us"), 1);
+            } finally {
+                testTaskStorage.clear();
+            }
+            assert.equal(testTaskStorage.count(), 0);
+        });
+
+        it("deleteTask sem whatsappId lança erro explícito para evitar remoção cross-user", () => {
+            const repo = createInMemoryTaskRepository();
+            repo.createTask("user_a@c.us", {
+                titulo: "Tarefa protegida",
+                tipo: "trabalho",
+            });
+
+            assert.throws(
+                () => repo.deleteTask(1),
+                /whatsappId é obrigatório/
+            );
+            assert.throws(
+                () => repo.deleteTask(1, {}),
+                /whatsappId é obrigatório/
+            );
+            assert.equal(repo.count("user_a@c.us"), 1);
+        });
+    });
 });
 
 describe("config/env - loadEnv", () => {
@@ -358,8 +723,32 @@ describe("config/env - loadEnv", () => {
             "gemini-2.5-flash",
             "gemini-2.0-flash",
         ]);
+        assert.equal(loaded.ADMIN_TEST_NUMBER, undefined);
         assert.equal(Object.isFrozen(loaded), true);
         assert.equal(Object.isFrozen(loaded.GEMINI_FALLBACK_MODELS), true);
+    });
+
+    it("trata ADMIN_TEST_NUMBER preenchido, vazio e ausente", () => {
+        const withAdmin = loadEnv({
+            ...baseSyntheticEnv,
+            ADMIN_TEST_NUMBER: "  5511999998888  ",
+        });
+        assert.equal(withAdmin.ADMIN_TEST_NUMBER, "5511999998888");
+
+        const withEmptyAdmin = loadEnv({
+            ...baseSyntheticEnv,
+            ADMIN_TEST_NUMBER: "",
+        });
+        assert.equal(withEmptyAdmin.ADMIN_TEST_NUMBER, undefined);
+
+        const withWhitespaceAdmin = loadEnv({
+            ...baseSyntheticEnv,
+            ADMIN_TEST_NUMBER: "   ",
+        });
+        assert.equal(withWhitespaceAdmin.ADMIN_TEST_NUMBER, undefined);
+
+        const withoutAdmin = loadEnv({ ...baseSyntheticEnv });
+        assert.equal(withoutAdmin.ADMIN_TEST_NUMBER, undefined);
     });
 
     it("faz parsing de GEMINI_FALLBACK_MODELS a partir de CSV e array", () => {
