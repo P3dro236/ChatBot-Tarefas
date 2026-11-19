@@ -1,3 +1,1 @@
-export const horarios_schema ={
-    //Criar um schema de horários
-}
+export const horarios_schema = {};
